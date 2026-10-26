@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fuzzy Logic Fan Controller</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AI • FUZZY LOGIC</p>
+        <h1>Fuzzy Fan Controller</h1>
+        <p class="subtitle">Control fan speed using temperature and humidity with fuzzy inference.</p>
+      </div>
+      <div class="status"><span></span> Controller Online</div>
+    </header>
+
+    <section class="grid top-grid">
+      <div class="card inputs-card">
+        <div class="card-title"><h2>Inputs</h2><span>Live</span></div>
+
+        <label for="temperature">Temperature <strong id="tempValue">30.0 °C</strong></label>
+        <input id="temperature" type="range" min="0" max="50" step="0.1" value="30">
+        <div class="range-labels"><span>0°C</span><span>50°C</span></div>
+
+        <label for="humidity">Humidity <strong id="humValue">60.0 %</strong></label>
+        <input id="humidity" type="range" min="0" max="100" step="0.1" value="60">
+        <div class="range-labels"><span>0%</span><span>100%</span></div>
+
+        <button id="resetBtn">Reset to Default</button>
+      </div>
+
+      <div class="card output-card">
+        <div class="card-title"><h2>Fuzzy Output</h2><span id="fanLabel">—</span></div>
+        <div class="speed"><span id="fanSpeed">0.0</span><small>%</small></div>
+        <p class="muted">Defuzzified fan speed using centroid method</p>
+        <div class="gauge"><div id="gaugeFill"></div></div>
+        <div class="gauge-labels"><span>0%</span><span>50%</span><span>100%</span></div>
+      </div>
+    </section>
+
+    <section class="grid charts-grid">
+      <div class="card chart-card">
+        <div class="card-title"><h2>Temperature Membership</h2><span id="tempState">—</span></div>
+        <div class="membership-list" id="tempMembership"></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-title"><h2>Humidity Membership</h2><span id="humState">—</span></div>
+        <div class="membership-list" id="humMembership"></div>
+      </div>
+    </section>
+
+    <section class="card rules-card">
+      <div class="card-title"><h2>Fuzzy Rules</h2><span>9 rules</span></div>
+      <div id="rules"></div>
+    </section>
+
+    <section class="card chart-card output-chart">
+      <div class="card-title"><h2>Output Strengths & Centroid</h2><span id="centroid">—</span></div>
+      <div class="bars" id="outputStrength"></div>
+    </section>
+
+    <footer>Fuzzy Fan Controller • Temperature + Humidity → Fuzzy Inference → Fan Speed</footer>
+  </main>
+
+  <script>
+    const temp = document.getElementById('temperature');
+    const hum = document.getElementById('humidity');
+    const tempValue = document.getElementById('tempValue');
+    const humValue = document.getElementById('humValue');
+    const fanSpeed = document.getElementById('fanSpeed');
+    const fanLabel = document.getElementById('fanLabel');
+    const gaugeFill = document.getElementById('gaugeFill');
+    const tempMembership = document.getElementById('tempMembership');
+    const humMembership = document.getElementById('humMembership');
+    const rules = document.getElementById('rules');
+    const outputStrength = document.getElementById('outputStrength');
+    const centroid = document.getElementById('centroid');
+    const tempState = document.getElementById('tempState');
+    const humState = document.getElementById('humState');
+
+    let timer;
+
+    function membershipHtml(values) {
+      return Object.entries(values).map(([name, value]) => `
+        <div class="membership-row">
+          <div><span>${name}</span><b>${value.toFixed(3)}</b></div>
+          <div class="mini-bar"><i style="width:${value * 100}%"></i></div>
+        </div>
+      `).join('');
+    }
+
+    function strongest(values) {
+      const entries = Object.entries(values).sort((a,b) => b[1] - a[1]);
+      return entries[0][1] > 0 ? entries[0][0] : 'None';
+    }
+
+    function updateRules(data) {
+      rules.innerHTML = data.rules.map(r => `
+        <div class="rule ${r.fired ? 'fired' : ''}">
+          <span class="rule-id">R${r.id}</span>
+          <span>${r.text}</span>
+          <b>${r.strength.toFixed(3)}</b>
+        </div>
+      `).join('');
+    }
+
+    function updateOutputStrength(data) {
+      outputStrength.innerHTML = Object.entries(data.output_strength).map(([name, value]) => `
+        <div class="output-row">
+          <span>${name}</span>
+          <div class="mini-bar"><i style="width:${value * 100}%"></i></div>
+          <b>${value.toFixed(3)}</b>
+        </div>
+      `).join('');
+    }
+
+    async function update() {
+      const t = Number(temp.value);
+      const h = Number(hum.value);
+      tempValue.textContent = `${t.toFixed(1)} °C`;
+      humValue.textContent = `${h.toFixed(1)} %`;
+
+      try {
+        const response = await fetch('/predict', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({temperature: t, humidity: h})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Something went wrong');
+
+        fanSpeed.textContent = data.fan_speed.toFixed(1);
+        fanLabel.textContent = data.fan_label;
+        gaugeFill.style.width = `${Math.min(100, Math.max(0, data.fan_speed))}%`;
+
+        tempMembership.innerHTML = membershipHtml(data.temperature_membership);
+        humMembership.innerHTML = membershipHtml(data.humidity_membership);
+        tempState.textContent = `Strongest: ${strongest(data.temperature_membership)}`;
+        humState.textContent = `Strongest: ${strongest(data.humidity_membership)}`;
+        updateRules(data);
+        updateOutputStrength(data);
+        centroid.textContent = `Centroid: ${data.fan_speed.toFixed(2)}%`;
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function scheduleUpdate() {
+      clearTimeout(timer);
+      timer = setTimeout(update, 80);
+    }
+
+    temp.addEventListener('input', scheduleUpdate);
+    hum.addEventListener('input', scheduleUpdate);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      temp.value = 30;
+      hum.value = 60;
+      update();
+    });
+
+    update();
+  </script>
+</body>
+</html>
